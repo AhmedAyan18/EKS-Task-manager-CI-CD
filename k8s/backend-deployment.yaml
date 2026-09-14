@@ -35,8 +35,7 @@ spec:
 
         - name: backend
 
-          image: 795445317757.dkr.ecr.eu-north-1.amazonaws.com/myapp-backend:latest
-
+          image: BACKEND_IMAGE
           ports:
 
             - containerPort: 5000
