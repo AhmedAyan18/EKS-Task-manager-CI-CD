@@ -1,248 +1,274 @@
 name: Build and Deploy to EKS
 
-
 on:
-
   push:
-
     branches:
-
       - main
 
+# GitHub OIDC permissions
+permissions:
+  id-token: write
+  contents: read
 
 env:
-
   AWS_REGION: ${{ secrets.AWS_REGION }}
-
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-
   EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
 
-  FRONTEND_REPOSITORY: task-manager-frontend
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
 
-  BACKEND_REPOSITORY: task-manager-backend
+  FRONTEND_REPOSITORY: myapp-frontend
+  BACKEND_REPOSITORY: myapp-backend
+
+  K8S_NAMESPACE: task-manager
 
 
 jobs:
 
   build-and-deploy:
 
-    runs-on: ubuntu-latest
+    name: Build, Push and Deploy
 
+    runs-on: ubuntu-latest
 
     steps:
 
-
-      # ---------------------------------------------------
-      # Checkout
-      # ---------------------------------------------------
+      # ===================================================
+      # 1. Checkout
+      # ===================================================
 
       - name: Checkout source code
-
         uses: actions/checkout@v4
 
 
-      # ---------------------------------------------------
-      # AWS credentials
-      # ---------------------------------------------------
+      # ===================================================
+      # 2. Configure AWS using GitHub OIDC
+      # ===================================================
 
       - name: Configure AWS credentials
-
         uses: aws-actions/configure-aws-credentials@v4
-
         with:
-
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
 
-      # ---------------------------------------------------
-      # ECR Login
-      # ---------------------------------------------------
+      # ===================================================
+      # 3. Verify AWS authentication
+      # ===================================================
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+
+      # ===================================================
+      # 4. Login to ECR
+      # ===================================================
 
       - name: Login to Amazon ECR
-
         uses: aws-actions/amazon-ecr-login@v2
 
 
-      # ---------------------------------------------------
-      # Image tag
-      # ---------------------------------------------------
+      # ===================================================
+      # 5. Create unique Docker image tag
+      # ===================================================
 
       - name: Set image tag
-
         run: |
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
 
-          echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+          echo "Using image tag:"
+          echo "${GITHUB_SHA}"
 
 
-      # ---------------------------------------------------
-      # Build Backend
-      # ---------------------------------------------------
+      # ===================================================
+      # 6. Build Backend
+      # ===================================================
 
-      - name: Build backend image
-
+      - name: Build backend Docker image
         run: |
-
           docker build \
-            -t $BACKEND_REPOSITORY:$IMAGE_TAG \
+            -t "$BACKEND_REPOSITORY:$IMAGE_TAG" \
             ./backend
 
 
-      # ---------------------------------------------------
-      # Build Frontend
-      # ---------------------------------------------------
+      # ===================================================
+      # 7. Build Frontend
+      # ===================================================
 
-      - name: Build frontend image
-
+      - name: Build frontend Docker image
         run: |
-
           docker build \
-            -t $FRONTEND_REPOSITORY:$IMAGE_TAG \
+            -t "$FRONTEND_REPOSITORY:$IMAGE_TAG" \
             ./frontend
 
 
-      # ---------------------------------------------------
-      # Tag Backend
-      # ---------------------------------------------------
+      # ===================================================
+      # 8. Tag Backend for ECR
+      # ===================================================
 
-      - name: Tag images
-
+      - name: Tag backend image
         run: |
-
           docker tag \
-            $BACKEND_REPOSITORY:$IMAGE_TAG \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPOSITORY:$IMAGE_TAG
+            "$BACKEND_REPOSITORY:$IMAGE_TAG" \
+            "$ECR_REGISTRY/$BACKEND_REPOSITORY:$IMAGE_TAG"
 
 
+      # ===================================================
+      # 9. Tag Frontend for ECR
+      # ===================================================
+
+      - name: Tag frontend image
+        run: |
           docker tag \
-            $FRONTEND_REPOSITORY:$IMAGE_TAG \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPOSITORY:$IMAGE_TAG
+            "$FRONTEND_REPOSITORY:$IMAGE_TAG" \
+            "$ECR_REGISTRY/$FRONTEND_REPOSITORY:$IMAGE_TAG"
 
 
-      # ---------------------------------------------------
-      # Push images
-      # ---------------------------------------------------
+      # ===================================================
+      # 10. Push Backend to ECR
+      # ===================================================
 
-      - name: Push images to ECR
-
+      - name: Push backend image
         run: |
-
           docker push \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPOSITORY:$IMAGE_TAG
+            "$ECR_REGISTRY/$BACKEND_REPOSITORY:$IMAGE_TAG"
 
 
-          docker push \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPOSITORY:$IMAGE_TAG
+      # ===================================================
+      # 11. Push Frontend to ECR
+      # ===================================================
 
-
-      # ---------------------------------------------------
-      # Configure Kubernetes
-      # ---------------------------------------------------
-
-      - name: Configure kubectl
-
+      - name: Push frontend image
         run: |
+          docker push \
+            "$ECR_REGISTRY/$FRONTEND_REPOSITORY:$IMAGE_TAG"
 
+
+      # ===================================================
+      # 12. Configure kubectl
+      # ===================================================
+
+      - name: Configure kubectl for EKS
+        run: |
           aws eks update-kubeconfig \
-            --region $AWS_REGION \
-            --name $EKS_CLUSTER_NAME
+            --region "$AWS_REGION" \
+            --name "$EKS_CLUSTER_NAME"
 
 
-      # ---------------------------------------------------
-      # Namespace
-      # ---------------------------------------------------
+      # ===================================================
+      # 13. Verify EKS connection
+      # ===================================================
+
+      - name: Verify EKS connection
+        run: |
+          kubectl get nodes
+
+          echo "Current Kubernetes context:"
+          kubectl config current-context
+
+
+      # ===================================================
+      # 14. Apply Namespace
+      # ===================================================
 
       - name: Apply namespace
-
         run: |
-
           kubectl apply \
             -f k8s/namespace.yaml
 
 
-      # ---------------------------------------------------
-      # Backend
-      # ---------------------------------------------------
+      # ===================================================
+      # 15. Deploy Backend
+      # ===================================================
 
       - name: Deploy backend
-
         run: |
 
           sed \
-            "s|BACKEND_IMAGE|$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPOSITORY:$IMAGE_TAG|g" \
+            "s|BACKEND_IMAGE|$ECR_REGISTRY/$BACKEND_REPOSITORY:$IMAGE_TAG|g" \
             k8s/backend-deployment.yaml \
             | kubectl apply -f -
-
 
           kubectl apply \
             -f k8s/backend-service.yaml
 
 
-      # ---------------------------------------------------
-      # Frontend
-      # ---------------------------------------------------
+      # ===================================================
+      # 16. Deploy Frontend
+      # ===================================================
 
       - name: Deploy frontend
-
         run: |
 
           sed \
-            "s|FRONTEND_IMAGE|$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPOSITORY:$IMAGE_TAG|g" \
+            "s|FRONTEND_IMAGE|$ECR_REGISTRY/$FRONTEND_REPOSITORY:$IMAGE_TAG|g" \
             k8s/frontend-deployment.yaml \
             | kubectl apply -f -
-
 
           kubectl apply \
             -f k8s/frontend-service.yaml
 
 
-      # ---------------------------------------------------
-      # Backend rollout
-      # ---------------------------------------------------
+      # ===================================================
+      # 17. Wait for Backend
+      # ===================================================
 
       - name: Wait for backend rollout
-
         run: |
-
           kubectl rollout status \
             deployment/backend \
-            -n task-manager \
+            -n "$K8S_NAMESPACE" \
             --timeout=180s
 
 
-      # ---------------------------------------------------
-      # Frontend rollout
-      # ---------------------------------------------------
+      # ===================================================
+      # 18. Wait for Frontend
+      # ===================================================
 
       - name: Wait for frontend rollout
-
         run: |
-
           kubectl rollout status \
             deployment/frontend \
-            -n task-manager \
+            -n "$K8S_NAMESPACE" \
             --timeout=180s
 
 
-      # ---------------------------------------------------
-      # Verification
-      # ---------------------------------------------------
+      # ===================================================
+      # 19. Verify Kubernetes resources
+      # ===================================================
 
       - name: Verify deployment
-
         run: |
 
-          kubectl get deployments \
-            -n task-manager
+          echo "======================================"
+          echo "DEPLOYMENTS"
+          echo "======================================"
 
+          kubectl get deployments \
+            -n "$K8S_NAMESPACE"
+
+
+          echo "======================================"
+          echo "PODS"
+          echo "======================================"
 
           kubectl get pods \
-            -n task-manager
+            -n "$K8S_NAMESPACE" \
+            -o wide
 
+
+          echo "======================================"
+          echo "SERVICES"
+          echo "======================================"
 
           kubectl get services \
-            -n task-manager
+            -n "$K8S_NAMESPACE"
+
+
+          echo "======================================"
+          echo "ENDPOINTS"
+          echo "======================================"
+
+          kubectl get endpoints \
+            -n "$K8S_NAMESPACE"
