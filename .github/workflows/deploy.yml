@@ -11,11 +11,11 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+  AWS_REGION: ${{secrets.AWS_REGION}}
+  AWS_ACCOUNT_ID: ${{secrets.AWS_ACCOUNT_ID}}
+  EKS_CLUSTER_NAME: ${{secrets.EKS_CLUSTER_NAME}}
 
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+  ECR_REGISTRY: ${{secrets.AWS_ACCOUNT_ID}}.dkr.ecr.${{secrets.AWS_REGION}}.amazonaws.com
 
   FRONTEND_REPOSITORY: myapp-frontend
   BACKEND_REPOSITORY: myapp-backend
