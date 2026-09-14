@@ -1,26 +1,16 @@
 apiVersion: v1
-
 kind: Service
-
 metadata:
-
   name: frontend-service
-
   namespace: task-manager
-
-
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-subnets: "subnet-08b34b99dc338a6bb,subnet-0ea5ef211ff8abfd0,subnet-0aede80587379272a"
 spec:
-
-  selector:
-
-    app: frontend
-
-
-  ports:
-
-    - port: 80
-
-      targetPort: 80
-
-
   type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
