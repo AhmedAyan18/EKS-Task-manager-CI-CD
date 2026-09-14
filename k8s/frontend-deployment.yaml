@@ -35,7 +35,7 @@ spec:
 
         - name: frontend
 
-          image: FRONTEND_IMAGE
+          image: 795445317757.dkr.ecr.eu-north-1.amazonaws.com/myapp-frontend:latest
 
           ports:
 
