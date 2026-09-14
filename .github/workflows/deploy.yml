@@ -1,3 +1,4 @@
+
 name: Build and Deploy to EKS
 
 on:
@@ -10,9 +11,7 @@ permissions:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
   FRONTEND_REPOSITORY: myapp-frontend
   BACKEND_REPOSITORY: myapp-backend
   K8S_NAMESPACE: task-manager
@@ -23,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # ===================================================
       # 1. Checkout
       # ===================================================
@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ===================================================
-      # 2. Configure AWS using Access Keys (NO OIDC)
+      # 2. Configure AWS credentials
       # ===================================================
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -47,18 +47,22 @@ jobs:
           aws sts get-caller-identity
 
       # ===================================================
-      # 4. Login to ECR
+      # 4. Login to Amazon ECR
       # ===================================================
       - name: Login to Amazon ECR
+        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       # ===================================================
-      # 5. Create unique Docker image tag
+      # 5. Set image tag and ECR registry
       # ===================================================
-      - name: Set image tag
+      - name: Set image variables
         run: |
           echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
-          echo "Using image tag: ${GITHUB_SHA}"
+          echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> "$GITHUB_ENV"
+
+          echo "Image tag: ${GITHUB_SHA}"
+          echo "ECR registry: ${{ steps.login-ecr.outputs.registry }}"
 
       # ===================================================
       # 6. Build Backend
@@ -127,6 +131,7 @@ jobs:
       - name: Verify EKS connection
         run: |
           kubectl get nodes
+
           echo "Current Kubernetes context:"
           kubectl config current-context
 
@@ -146,6 +151,7 @@ jobs:
             "s|BACKEND_IMAGE|$ECR_REGISTRY/$BACKEND_REPOSITORY:$IMAGE_TAG|g" \
             k8s/backend-deployment.yaml \
             | kubectl apply -f -
+
           kubectl apply -f k8s/backend-service.yaml
 
       # ===================================================
@@ -157,6 +163,7 @@ jobs:
             "s|FRONTEND_IMAGE|$ECR_REGISTRY/$FRONTEND_REPOSITORY:$IMAGE_TAG|g" \
             k8s/frontend-deployment.yaml \
             | kubectl apply -f -
+
           kubectl apply -f k8s/frontend-service.yaml
 
       # ===================================================
@@ -187,19 +194,29 @@ jobs:
           echo "======================================"
           echo "DEPLOYMENTS"
           echo "======================================"
-          kubectl get deployments -n "$K8S_NAMESPACE"
+
+          kubectl get deployments \
+            -n "$K8S_NAMESPACE"
 
           echo "======================================"
           echo "PODS"
           echo "======================================"
-          kubectl get pods -n "$K8S_NAMESPACE" -o wide
+
+          kubectl get pods \
+            -n "$K8S_NAMESPACE" \
+            -o wide
 
           echo "======================================"
           echo "SERVICES"
           echo "======================================"
-          kubectl get services -n "$K8S_NAMESPACE"
+
+          kubectl get services \
+            -n "$K8S_NAMESPACE"
 
           echo "======================================"
           echo "ENDPOINTS"
           echo "======================================"
-          kubectl get endpoints -n "$K8S_NAMESPACE"
+
+          kubectl get endpoints \
+            -n "$K8S_NAMESPACE"
+
