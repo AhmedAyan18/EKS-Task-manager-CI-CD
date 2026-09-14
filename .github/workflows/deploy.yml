@@ -1,0 +1,248 @@
+name: Build and Deploy to EKS
+
+
+on:
+
+  push:
+
+    branches:
+
+      - main
+
+
+env:
+
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+
+  FRONTEND_REPOSITORY: task-manager-frontend
+
+  BACKEND_REPOSITORY: task-manager-backend
+
+
+jobs:
+
+  build-and-deploy:
+
+    runs-on: ubuntu-latest
+
+
+    steps:
+
+
+      # ---------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------
+
+      - name: Checkout source code
+
+        uses: actions/checkout@v4
+
+
+      # ---------------------------------------------------
+      # AWS credentials
+      # ---------------------------------------------------
+
+      - name: Configure AWS credentials
+
+        uses: aws-actions/configure-aws-credentials@v4
+
+        with:
+
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+          aws-region: ${{ env.AWS_REGION }}
+
+
+      # ---------------------------------------------------
+      # ECR Login
+      # ---------------------------------------------------
+
+      - name: Login to Amazon ECR
+
+        uses: aws-actions/amazon-ecr-login@v2
+
+
+      # ---------------------------------------------------
+      # Image tag
+      # ---------------------------------------------------
+
+      - name: Set image tag
+
+        run: |
+
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+
+
+      # ---------------------------------------------------
+      # Build Backend
+      # ---------------------------------------------------
+
+      - name: Build backend image
+
+        run: |
+
+          docker build \
+            -t $BACKEND_REPOSITORY:$IMAGE_TAG \
+            ./backend
+
+
+      # ---------------------------------------------------
+      # Build Frontend
+      # ---------------------------------------------------
+
+      - name: Build frontend image
+
+        run: |
+
+          docker build \
+            -t $FRONTEND_REPOSITORY:$IMAGE_TAG \
+            ./frontend
+
+
+      # ---------------------------------------------------
+      # Tag Backend
+      # ---------------------------------------------------
+
+      - name: Tag images
+
+        run: |
+
+          docker tag \
+            $BACKEND_REPOSITORY:$IMAGE_TAG \
+            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPOSITORY:$IMAGE_TAG
+
+
+          docker tag \
+            $FRONTEND_REPOSITORY:$IMAGE_TAG \
+            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPOSITORY:$IMAGE_TAG
+
+
+      # ---------------------------------------------------
+      # Push images
+      # ---------------------------------------------------
+
+      - name: Push images to ECR
+
+        run: |
+
+          docker push \
+            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPOSITORY:$IMAGE_TAG
+
+
+          docker push \
+            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPOSITORY:$IMAGE_TAG
+
+
+      # ---------------------------------------------------
+      # Configure Kubernetes
+      # ---------------------------------------------------
+
+      - name: Configure kubectl
+
+        run: |
+
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name $EKS_CLUSTER_NAME
+
+
+      # ---------------------------------------------------
+      # Namespace
+      # ---------------------------------------------------
+
+      - name: Apply namespace
+
+        run: |
+
+          kubectl apply \
+            -f k8s/namespace.yaml
+
+
+      # ---------------------------------------------------
+      # Backend
+      # ---------------------------------------------------
+
+      - name: Deploy backend
+
+        run: |
+
+          sed \
+            "s|BACKEND_IMAGE|$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$BACKEND_REPOSITORY:$IMAGE_TAG|g" \
+            k8s/backend-deployment.yaml \
+            | kubectl apply -f -
+
+
+          kubectl apply \
+            -f k8s/backend-service.yaml
+
+
+      # ---------------------------------------------------
+      # Frontend
+      # ---------------------------------------------------
+
+      - name: Deploy frontend
+
+        run: |
+
+          sed \
+            "s|FRONTEND_IMAGE|$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$FRONTEND_REPOSITORY:$IMAGE_TAG|g" \
+            k8s/frontend-deployment.yaml \
+            | kubectl apply -f -
+
+
+          kubectl apply \
+            -f k8s/frontend-service.yaml
+
+
+      # ---------------------------------------------------
+      # Backend rollout
+      # ---------------------------------------------------
+
+      - name: Wait for backend rollout
+
+        run: |
+
+          kubectl rollout status \
+            deployment/backend \
+            -n task-manager \
+            --timeout=180s
+
+
+      # ---------------------------------------------------
+      # Frontend rollout
+      # ---------------------------------------------------
+
+      - name: Wait for frontend rollout
+
+        run: |
+
+          kubectl rollout status \
+            deployment/frontend \
+            -n task-manager \
+            --timeout=180s
+
+
+      # ---------------------------------------------------
+      # Verification
+      # ---------------------------------------------------
+
+      - name: Verify deployment
+
+        run: |
+
+          kubectl get deployments \
+            -n task-manager
+
+
+          kubectl get pods \
+            -n task-manager
+
+
+          kubectl get services \
+            -n task-manager
